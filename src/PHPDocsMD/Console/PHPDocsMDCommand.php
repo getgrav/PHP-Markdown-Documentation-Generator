@@ -25,6 +25,8 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
     const OPT_TABLE_GENERATOR = 'tableGenerator';
     const OPT_SEE = 'see';
     const OPT_NO_INTERNAL = 'no-internal';
+    const OPT_HTML = 'html';
+    const OPT_NO_FRONTMATTER = 'no-frontmatter';
 
     /**
      * @var array
@@ -114,6 +116,18 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
                 null,
                 InputOption::VALUE_NONE,
                 'Ignore entities marked @internal'
+            )
+            ->addOption(
+                self::OPT_HTML,
+                null,
+                InputOption::VALUE_NONE,
+                'Convert output to HTML using Parsedown (for use in Grav with markdown processing disabled)'
+            )
+            ->addOption(
+                self::OPT_NO_FRONTMATTER,
+                null,
+                InputOption::VALUE_NONE,
+                'When used with --html, omit the Grav frontmatter header'
             );
     }
 
@@ -137,6 +151,8 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
         $this->methodRegex = $input->getOption(self::OPT_METHOD_REGEX) ?: false;
         $includeSee = $input->getOption(self::OPT_SEE);
         $noInternal = $input->getOption(self::OPT_NO_INTERNAL);
+        $useHtml = $input->getOption(self::OPT_HTML);
+        $noFrontmatter = $input->getOption(self::OPT_NO_FRONTMATTER);
         $requestingOneClass = false;
 
         if( $bootstrap ) {
@@ -262,9 +278,13 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
 
         if( empty($tableOfContent) ) {
             throw new \InvalidArgumentException('No classes found');
-        } elseif( !$requestingOneClass ) {
-            $output->writeln('## Table of contents'.PHP_EOL, OutputInterface::OUTPUT_RAW);
-            $output->writeln(implode(PHP_EOL, $tableOfContent), OutputInterface::OUTPUT_RAW);
+        }
+
+        // Build the markdown string
+        $markdown = '';
+        if( !$requestingOneClass ) {
+            $markdown .= '## Table of contents' . PHP_EOL . PHP_EOL;
+            $markdown .= implode(PHP_EOL, $tableOfContent);
         }
 
         // Convert references to classes into links (batched for performance)
@@ -283,8 +303,21 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
         }
         $docString = str_replace($findAll, $replaceAll, $docString);
 
+        $markdown .= PHP_EOL . $docString;
+
         fwrite(STDERR, " Writing output...\n");
-        $output->writeln(PHP_EOL.$docString, OutputInterface::OUTPUT_RAW);
+
+        if ($useHtml) {
+            $parsedown = new \Parsedown();
+            $result = $parsedown->text($markdown);
+            if (!$noFrontmatter) {
+                $result = "---\nprocess:\n    markdown: false\n---\n\n" . $result;
+            }
+            $output->writeln($result, OutputInterface::OUTPUT_RAW);
+        } else {
+            $output->writeln($markdown, OutputInterface::OUTPUT_RAW);
+        }
+
         fwrite(STDERR, " Done.\n");
 
         return 0;
