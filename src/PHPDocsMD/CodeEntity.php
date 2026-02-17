@@ -38,7 +38,7 @@ class CodeEntity {
      * @param bool $toggle
      * @return void|bool
      */
-    public function isDeprecated($toggle=null)
+    public function isDeprecated(?bool $toggle = null)
     {
         if( $toggle === null ) {
             return $this->isDeprecated;

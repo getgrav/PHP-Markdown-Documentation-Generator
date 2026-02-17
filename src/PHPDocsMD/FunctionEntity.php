@@ -46,7 +46,7 @@ class FunctionEntity extends CodeEntity {
     /**
      * @param bool $toggle
      */
-    public function isStatic($toggle=null)
+    public function isStatic(?bool $toggle = null)
     {
         if ( $toggle === null ) {
             return $this->isStatic;
@@ -58,7 +58,7 @@ class FunctionEntity extends CodeEntity {
     /**
      * @param bool $toggle
      */
-    public function isAbstract($toggle=null)
+    public function isAbstract(?bool $toggle = null)
     {
         if ( $toggle === null ) {
             return $this->abstract;
@@ -70,7 +70,7 @@ class FunctionEntity extends CodeEntity {
     /**
      * @param bool $toggle
      */
-    public function isReturningNativeClass($toggle=null)
+    public function isReturningNativeClass(?bool $toggle = null)
     {
         if ( $toggle === null ) {
             return $this->isReturningNativeClass;

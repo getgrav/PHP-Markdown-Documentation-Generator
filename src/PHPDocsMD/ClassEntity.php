@@ -47,7 +47,7 @@ class ClassEntity extends CodeEntity {
      * @param bool $toggle
      * @return bool
      */
-    public function isAbstract($toggle=null)
+    public function isAbstract(?bool $toggle = null)
     {
         if ( $toggle === null ) {
             return $this->abstract;
@@ -60,7 +60,7 @@ class ClassEntity extends CodeEntity {
      * @param bool $toggle
      * @return bool
      */
-    public function hasIgnoreTag($toggle=null)
+    public function hasIgnoreTag(?bool $toggle = null)
     {
         if( $toggle === null ) {
             return $this->hasIgnoreTag;
@@ -73,7 +73,7 @@ class ClassEntity extends CodeEntity {
      * @param bool $toggle
      * @return bool
      */
-    public function isInterface($toggle=null)
+    public function isInterface(?bool $toggle = null)
     {
         if( $toggle === null ) {
             return $this->isInterface;
@@ -86,7 +86,7 @@ class ClassEntity extends CodeEntity {
      * @param bool $toggle
      * @return bool
      */
-    public function isNative($toggle=null)
+    public function isNative(?bool $toggle = null)
     {
         if( $toggle === null ) {
             return $this->isNative;
