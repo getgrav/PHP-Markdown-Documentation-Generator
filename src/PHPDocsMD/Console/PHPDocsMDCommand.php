@@ -123,8 +123,10 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
      * @return int|null
      * @throws \InvalidArgumentException
      */
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        error_reporting(E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR);
+        ini_set('display_errors', 'stderr');
 
         $classes = $input->getArgument(self::ARG_CLASS);
         $bootstrap = $input->getOption(self::OPT_BOOTSTRAP);
@@ -164,8 +166,17 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
         $body = [];
         $classLinks = [];
 
+        // Count total classes for progress
+        $totalClasses = 0;
+        foreach($classCollection as $ns => $cls) {
+            $totalClasses += count($cls);
+        }
+        $currentClass = 0;
+
         foreach($classCollection as $ns => $classes) {
             foreach($classes as $className) {
+                $currentClass++;
+                fwrite(STDERR, "\r\033[K Processing [$currentClass/$totalClasses] $className");
                 $class = $this->getClassEntity($className);
 
                 if ($class->hasIgnoreTag()
@@ -203,7 +214,7 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
                 $docs = ($requestingOneClass ? '':'<hr /><a id="' . trim($classLinks[$class->getName()], '#') . '"></a>'.PHP_EOL);
 
                 if( $class->isDeprecated() ) {
-                    $docs .= '### <strike>'.$class->generateTitle().'</strike>'.PHP_EOL.PHP_EOL.
+                    $docs .= '### <del>'.$class->generateTitle().'</del>'.PHP_EOL.PHP_EOL.
                             '> **DEPRECATED** '.$class->getDeprecationMessage().PHP_EOL.PHP_EOL;
                 }
                 else {
@@ -247,26 +258,35 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
             }
         }
 
+        fwrite(STDERR, "\r\033[K Generating documentation...\n");
+
         if( empty($tableOfContent) ) {
             throw new \InvalidArgumentException('No classes found');
         } elseif( !$requestingOneClass ) {
-            $output->writeln('## Table of contents'.PHP_EOL);
-            $output->writeln(implode(PHP_EOL, $tableOfContent));
+            $output->writeln('## Table of contents'.PHP_EOL, OutputInterface::OUTPUT_RAW);
+            $output->writeln(implode(PHP_EOL, $tableOfContent), OutputInterface::OUTPUT_RAW);
         }
 
-        // Convert references to classes into links
+        // Convert references to classes into links (batched for performance)
+        fwrite(STDERR, " Linking " . count($classLinks) . " class references...\n");
         asort($classLinks);
         $classLinks = array_reverse($classLinks, true);
         $docString = implode(PHP_EOL, $body);
+        $findAll = [];
+        $replaceAll = [];
         foreach($classLinks as $className => $url) {
             $link = sprintf('[%s](%s)', $className, $url);
-            $find = array('<em>'.$className, '/'.$className);
-            $replace = array('<em>'.$link, '/'.$link);
-            $docString = str_replace($find, $replace, $docString);
+            $findAll[] = '<em>'.$className;
+            $findAll[] = '/'.$className;
+            $replaceAll[] = '<em>'.$link;
+            $replaceAll[] = '/'.$link;
         }
+        $docString = str_replace($findAll, $replaceAll, $docString);
 
-        $output->writeln(PHP_EOL.$docString);
-        
+        fwrite(STDERR, " Writing output...\n");
+        $output->writeln(PHP_EOL.$docString, OutputInterface::OUTPUT_RAW);
+        fwrite(STDERR, " Done.\n");
+
         return 0;
     }
 
@@ -331,19 +351,169 @@ class PHPDocsMDCommand extends \Symfony\Component\Console\Command\Command {
      */
     private function findClassesInDir($dir, $collection=[], $ignores=[])
     {
+        // Phase 1: Collect all candidate class names without loading them
+        fwrite(STDERR, " Scanning for classes...\n");
+        $candidates = $this->collectClassCandidates($dir, [], $ignores);
+        $classNames = array_column($candidates, 'className');
+        fwrite(STDERR, " Found " . count($classNames) . " candidates\n");
+
+        // Phase 2: Quick subprocess scan to find classes that cause fatal errors
+        fwrite(STDERR, " Validating class compatibility...\n");
+        $fatalClasses = $this->findFatalClasses($classNames);
+        if (!empty($fatalClasses)) {
+            fwrite(STDERR, " Skipping " . count($fatalClasses) . " incompatible class(es)\n");
+        }
+
+        // Phase 3: Load non-fatal classes directly in this process
+        fwrite(STDERR, " Loading classes...\n");
+        $safeSet = array_flip($fatalClasses);
+        $loaded = 0;
+        foreach ($candidates as $candidate) {
+            $className = $candidate['className'];
+            if (isset($safeSet[$className])) {
+                continue;
+            }
+            try {
+                if (class_exists($className, true) || interface_exists($className)) {
+                    $collection[$candidate['ns']][] = $className;
+                    $loaded++;
+                }
+            } catch (\Throwable $e) {
+                // Skip classes that throw errors during loading
+            }
+        }
+        fwrite(STDERR, " Loaded $loaded classes\n");
+
+        ksort($collection);
+        return $collection;
+    }
+
+    /**
+     * Collect candidate class names from directory without loading them
+     * @param string $dir
+     * @param array $candidates
+     * @param array $ignores
+     * @return array
+     */
+    private function collectClassCandidates($dir, $candidates=[], $ignores=[])
+    {
         foreach(new \FilesystemIterator($dir) as $f) {
             /** @var \SplFileInfo $f */
             if( $f->isFile() && !$f->isLink() ) {
                 list($ns, $className) = $this->findClassInFile($f->getRealPath());
-                if( $className && (class_exists($className, true) || interface_exists($className) || trait_exists($className)) ) {
-                    $collection[$ns][] = $className;
+                if( $className ) {
+                    $candidates[] = ['ns' => $ns, 'className' => $className];
                 }
             } elseif( $f->isDir() && !$f->isLink() && !$this->shouldIgnoreDirectory($f->getFilename(), $ignores) ) {
-                $collection = $this->findClassesInDir($f->getRealPath(), $collection);
+                $candidates = $this->collectClassCandidates($f->getRealPath(), $candidates);
             }
         }
-        ksort($collection);
-        return $collection;
+        return $candidates;
+    }
+
+    /**
+     * Find classes that cause fatal errors during loading by testing in subprocesses.
+     * Uses a fast batch approach: runs all classes in a subprocess, and when it crashes,
+     * identifies the fatal class and restarts with remaining classes.
+     * @param array $classNames
+     * @return array List of class names that cause fatal errors
+     */
+    private function findFatalClasses(array $classNames)
+    {
+        $autoloader = $this->findAutoloader();
+        if (!$autoloader) {
+            return [];
+        }
+
+        $fatal = [];
+        $remaining = array_values($classNames);
+
+        while (!empty($remaining)) {
+            $classFile = tempnam(sys_get_temp_dir(), 'phpdoc_cls_');
+            file_put_contents($classFile, implode("\n", $remaining));
+
+            $scriptFile = tempnam(sys_get_temp_dir(), 'phpdoc_chk_') . '.php';
+            file_put_contents($scriptFile,
+                '<?php' . "\n" .
+                'error_reporting(E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR);' . "\n" .
+                'require_once ' . var_export($autoloader, true) . ';' . "\n" .
+                '$classes = array_filter(explode("\n", file_get_contents(' . var_export($classFile, true) . ')));' . "\n" .
+                'foreach ($classes as $c) {' . "\n" .
+                '    $c = trim($c);' . "\n" .
+                '    if (empty($c)) continue;' . "\n" .
+                '    try {' . "\n" .
+                '        class_exists($c, true) || interface_exists($c, false);' . "\n" .
+                '        echo "OK:" . $c . "\n";' . "\n" .
+                '    } catch (\Throwable $e) {' . "\n" .
+                '        echo "ERR:" . $c . "\n";' . "\n" .
+                '    }' . "\n" .
+                '    fflush(STDOUT);' . "\n" .
+                '}' . "\n" .
+                'echo "DONE\n";' . "\n"
+            );
+
+            $output = [];
+            exec('php ' . escapeshellarg($scriptFile) . ' 2>/dev/null', $output, $exitCode);
+            @unlink($scriptFile);
+            @unlink($classFile);
+
+            if ($exitCode === 0) {
+                break; // All classes processed without fatal errors
+            }
+
+            // Find which classes were processed before the crash
+            $processed = [];
+            foreach ($output as $line) {
+                if (strpos($line, 'OK:') === 0) {
+                    $processed[] = substr($line, 3);
+                } elseif (strpos($line, 'ERR:') === 0) {
+                    $processed[] = substr($line, 4);
+                } elseif ($line === 'DONE') {
+                    break 2; // All done
+                }
+            }
+
+            // The class that caused the crash is the first unprocessed one
+            $processedSet = array_flip($processed);
+            $newRemaining = [];
+            $foundCrasher = false;
+            foreach ($remaining as $c) {
+                if (!$foundCrasher && !isset($processedSet[$c])) {
+                    $fatal[] = $c;
+                    $foundCrasher = true;
+                    continue;
+                }
+                if ($foundCrasher) {
+                    $newRemaining[] = $c;
+                }
+            }
+            $remaining = $newRemaining;
+
+            if (!$foundCrasher) {
+                break; // Can't determine the crasher, stop
+            }
+        }
+
+        return $fatal;
+    }
+
+    /**
+     * Find the Composer autoloader path
+     * @return string|null
+     */
+    private function findAutoloader()
+    {
+        $paths = [
+            getcwd() . '/vendor/autoload.php',
+            __DIR__ . '/../../../vendor/autoload.php',
+            __DIR__ . '/../../../../../autoload.php',
+        ];
+        foreach ($paths as $path) {
+            if (file_exists($path)) {
+                return realpath($path);
+            }
+        }
+        return null;
     }
 
     /**

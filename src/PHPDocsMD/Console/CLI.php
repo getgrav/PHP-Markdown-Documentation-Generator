@@ -15,7 +15,8 @@ class CLI extends Application {
     public function __construct()
     {
         $json = json_decode(file_get_contents(__DIR__.'/../../../composer.json'));
-        parent::__construct('PHP Markdown Documentation Generator', $json->version);
+        $version = $json->version ?? 'UNKNOWN';
+        parent::__construct('PHP Markdown Documentation Generator', $version);
     }
 
     /**
@@ -23,7 +24,7 @@ class CLI extends Application {
      * @param \Symfony\Component\Console\Input\OutputInterface $output
      * @return int
      */
-    public function run(InputInterface $input=null, OutputInterface $output=null)
+    public function run(?InputInterface $input = null, ?OutputInterface $output = null): int
     {
         $this->add(new PHPDocsMDCommand());
         return parent::run($input, $output);

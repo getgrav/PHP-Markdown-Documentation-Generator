@@ -52,10 +52,10 @@ class Reflector implements ReflectorInterface
      */
     function __construct(
         $className,
-        FunctionFinder $functionFinder = null,
-        DocInfoExtractor $docInfoExtractor = null,
-        UseInspector $useInspector = null,
-        ClassEntityFactory $classEntityFactory = null
+        ?FunctionFinder $functionFinder = null,
+        ?DocInfoExtractor $docInfoExtractor = null,
+        ?UseInspector $useInspector = null,
+        ?ClassEntityFactory $classEntityFactory = null
     ) {
         $this->className = $className;
         $this->functionFinder = $this->loadIfNull($functionFinder, FunctionFinder::class);
@@ -68,7 +68,7 @@ class Reflector implements ReflectorInterface
         );
     }
     
-    private function loadIfNull($obj, $className, $in=null)
+    private function loadIfNull($obj, $className, mixed $in = null)
     {
         return is_object($obj) ? $obj : new $className($in);
     }
@@ -336,26 +336,35 @@ class Reflector implements ReflectorInterface
      */
     static function getParamType(\ReflectionParameter $refParam)
     {
-        $export = \ReflectionParameter::export([
-                $refParam->getDeclaringClass()->name,
-                $refParam->getDeclaringFunction()->name
-            ],
-            $refParam->name,
-            true
-        );
+        $refType = $refParam->getType();
 
-        $export =  str_replace(' or NULL', '', $export);
-
-        $type = preg_replace('/.*?([\w\\\]+)\s+\$'.current(explode('=', $refParam->name)).'.*/', '\\1', $export);
-        if( strpos($type, 'Parameter ') !== false ) {
+        if ($refType === null) {
             return '';
         }
 
-        if( $type != 'array' && strpos($type, '\\') !== 0 ) {
-            $type = '\\'.$type;
+        if ($refType instanceof \ReflectionUnionType) {
+            $types = [];
+            foreach ($refType->getTypes() as $t) {
+                $name = $t->getName();
+                if ($name !== 'null') {
+                    $types[] = $t->isBuiltin() ? $name : '\\' . $name;
+                }
+            }
+            return implode('/', $types);
         }
 
-        return $type;
+        if ($refType instanceof \ReflectionNamedType) {
+            $type = $refType->getName();
+            if ($type === 'null') {
+                return '';
+            }
+            if ($type !== 'array' && !$refType->isBuiltin()) {
+                $type = '\\' . $type;
+            }
+            return $type;
+        }
+
+        return '';
     }
 
     /**

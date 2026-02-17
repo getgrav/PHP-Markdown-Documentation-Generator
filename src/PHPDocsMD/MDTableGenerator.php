@@ -132,7 +132,7 @@ class MDTableGenerator implements TableGenerator
         $str .= '</strong> : <em>'.$func->getReturnType().'</em>';
 
         if( $func->isDeprecated() ) {
-            $str = '<strike>'.$str.'</strike>';
+            $str = '<del>'.$str.'</del>';
             $str .= '<br /><em>DEPRECATED - '.$func->getDeprecationMessage().'</em>';
         } elseif( $func->getDescription() ) {
             $str .= '<br /><em>'.$func->getDescription().'</em>';
